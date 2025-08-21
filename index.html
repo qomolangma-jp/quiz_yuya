@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>クイズゲーム</title>
+</head>
+<body>
+  <h1>クイズゲーム</h1>
+  <div id="category-buttons">
+    <button onclick="startQuiz('eng')">英語</button>
+    <button onclick="startQuiz('jpn')">国語</button>
+    <button onclick="startQuiz('math')">算数</button>
+  </div>
+
+  <div id="quiz-area" style="display:none;">
+    <p id="question"></p>
+    <div id="choices"></div>
+    <div id="math-input" style="display:none;">
+      <input type="number" id="answer-input" placeholder="数字で答えて">
+      <button onclick="submitMathAnswer()">送信</button>
+    </div>
+    <p>スコア: <span id="score">0</span></p>
+  </div>
+
+  <div id="result-area" style="display:none;">
+    <h2>結果発表</h2>
+    <p id="final-score"></p>
+  </div>
+
+  <audio id="correctSound" src="pinpon.mp3"></audio>
+  <audio id="wrongSound" src="bubu.mp3"></audio>
+
+  <script>
+    const sheetURL = 'https://docs.google.com/spreadsheets/d/1xavfCWqHAvMPVhdTl0fWi8ulVP0veTQxudVvjXeCXq0/gviz/tq?tqx=out:json&sheet=quiz';
+    let questions = [], currentCategory = '', currentQuestionIndex = 0, score = 0;
+
+    async function startQuiz(category) {
+      currentCategory = category;
+      score = 0;
+      document.getElementById("score").textContent = score;
+
+      const res = await fetch(sheetURL);
+      const text = await res.text();
+      const json = JSON.parse(text.substr(47).slice(0, -2));
+      const data = json.table.rows.map(r => ({
+        category: r.c[1]?.v,
+        q: r.c[2]?.v,
+        a: r.c[3]?.v,
+        select_1: r.c[4]?.v,
+        select_2: r.c[5]?.v,
+        select_3: r.c[6]?.v
+      }));
+
+      questions = shuffle(data.filter(q => q.category === category && q.a));
+      currentQuestionIndex = 0;
+
+      document.getElementById("category-buttons").style.display = "none";
+      document.getElementById("quiz-area").style.display = "block";
+      document.getElementById("result-area").style.display = "none";
+      showQuestion();
+    }
+
+function showQuestion() {
+  if (currentQuestionIndex >= questions.length) return endQuiz();
+
+  const q = questions[currentQuestionIndex];
+  document.getElementById("question").textContent = q.q;
+
+  if (currentCategory === "math") {
+    // 選択肢は非表示、数値入力を表示
+    document.getElementById("choices").style.display = "none";
+    document.getElementById("math-input").style.display = "block";
+
+    // シートD列の値（a）をそのまま正解として保持
+    const ai = document.getElementById("answer-input");
+    ai.setAttribute("data-correct", String(q.a ?? ""));
+    ai.value = "";
+
+    // 前のメッセージが残っていたら削除
+    const oldMsg = document.getElementById('math-answer-msg');
+    if (oldMsg) oldMsg.remove();
+
+    ai.focus();
+  } else {
+    // 英語・国語は従来通り（a は 1,2,3 のインデックス）
+    const options = [q.select_1, q.select_2, q.select_3];
+    const correct = options[q.a - 1];
+    const choices = shuffle(options);
+    document.getElementById("choices").innerHTML = choices.map(c =>
+      `<button onclick="checkAnswer(${JSON.stringify(c)}, ${JSON.stringify(correct)})">${c}</button>`
+    ).join('');
+    document.getElementById("choices").style.display = "block";
+    document.getElementById("math-input").style.display = "none";
+  }
+}
+
+
+    function checkAnswer(choice, correct) {
+      if (choice === correct) {
+        document.getElementById("correctSound").play();
+        score++;
+      } else {
+        document.getElementById("wrongSound").play();
+        score--;
+      }
+      document.getElementById("score").textContent = score;
+      currentQuestionIndex++;
+      setTimeout(showQuestion, 500);
+    }
+
+function submitMathAnswer() {
+  const inputEl = document.getElementById("answer-input");
+  const userRaw = inputEl.value;
+
+  // 既存メッセージ掃除
+  let oldMsg = document.getElementById('math-answer-msg');
+  if (oldMsg) oldMsg.remove();
+
+  // メッセージ要素
+  let answerMsg = document.createElement('div');
+  answerMsg.id = 'math-answer-msg';
+  answerMsg.style.margin = '10px 0';
+  answerMsg.style.fontWeight = 'bold';
+
+  // 未入力は採点しない
+  if (!userRaw || userRaw.trim() === "") {
+    answerMsg.textContent = '数字で答えを入力してください';
+    document.getElementById('math-input').appendChild(answerMsg);
+    inputEl.focus();
+    return;
+  }
+
+  // 正解（シートD列の値）を取得
+  const sheetAnsRaw = document.getElementById("answer-input").getAttribute("data-correct") ?? "";
+  const userTrim = userRaw.trim();
+  const sheetTrim = String(sheetAnsRaw).trim();
+
+  // 数値っぽい場合は数値比較、そうでない場合は文字列一致
+  const userNum = Number(userTrim);
+  const sheetNum = Number(sheetTrim);
+  let isCorrect;
+
+  if (userTrim !== "" && sheetTrim !== "" && Number.isFinite(userNum) && Number.isFinite(sheetNum)) {
+    isCorrect = Math.abs(userNum - sheetNum) < 1e-9; // 数値一致
+  } else {
+    isCorrect = userTrim === sheetTrim;              // 文字列一致
+  }
+
+  answerMsg.textContent = isCorrect ? `正解！ 答え: ${sheetTrim}` : `不正解… 答え: ${sheetTrim}`;
+  document.getElementById('math-input').appendChild(answerMsg);
+
+  if (isCorrect) {
+    document.getElementById("correctSound").play();
+    score++;
+  } else {
+    document.getElementById("wrongSound").play();
+    score--;
+  }
+
+  document.getElementById("score").textContent = score;
+  currentQuestionIndex++;
+  inputEl.value = "";
+
+  setTimeout(() => {
+    const msg = document.getElementById('math-answer-msg');
+    if (msg) msg.remove();
+    showQuestion();
+  }, 1000);
+}
+
+
+    function endQuiz() {
+      document.getElementById("quiz-area").style.display = "none";
+      document.getElementById("result-area").style.display = "block";
+      document.getElementById("final-score").textContent = `あなたのスコア：${score}点`;
+
+      // GASに結果送信（URLをあとでセット）
+      /*
+      fetch('https://script.google.com/macros/s/【GAS URL】/exec', {
+        method: 'POST',
+        body: JSON.stringify({ category: currentCategory, score: score }),
+        headers: { 'Content-Type': 'application/json' }
+      });
+      */
+    }
+
+    function shuffle(array) {
+      return [...array].sort(() => Math.random() - 0.5);
+    }
+  </script>
+</body>
+</html>
